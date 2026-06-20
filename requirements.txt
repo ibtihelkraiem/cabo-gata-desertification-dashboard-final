@@ -3,6 +3,3 @@ pandas
 numpy
 plotly
 pillow
-earthengine-api
-streamlit-folium
-folium

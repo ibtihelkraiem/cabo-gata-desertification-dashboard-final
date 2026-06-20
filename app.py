@@ -11,10 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 from PIL import Image
 
-# Earth Engine / web map packages for the Sentinel-2 Products Explorer
-import ee
-import folium
-from streamlit_folium import st_folium
+# Public static deployment version: no live Earth Engine dependency on Streamlit Cloud
 
 
 
@@ -2273,64 +2270,8 @@ def s2_table_column_labels():
 
 @st.cache_resource(show_spinner=False)
 def initialize_earth_engine():
-    """
-    Initialize Earth Engine for the dynamic Sentinel-2 product map.
-
-    Local use:
-        Works after running Earth Engine authentication on the computer.
-
-    Streamlit Cloud use:
-        Add a service-account JSON in Streamlit Secrets using either:
-        GEE_SERVICE_ACCOUNT_JSON containing the full JSON text,
-        or a TOML table named [gee].
-    """
-    default_project_id = "graduationproject-493110"
-
-    # 1) Streamlit Cloud: easiest format, one secret containing the full JSON.
-    try:
-        if "GEE_SERVICE_ACCOUNT_JSON" in st.secrets:
-            gee_info = json.loads(st.secrets["GEE_SERVICE_ACCOUNT_JSON"])
-            service_account = gee_info.get("client_email")
-            project_id = gee_info.get("project_id", default_project_id)
-            credentials = ee.ServiceAccountCredentials(
-                service_account,
-                key_data=json.dumps(gee_info),
-            )
-            ee.Initialize(credentials, project=project_id)
-            return True, None
-    except Exception as secret_json_error:
-        secret_json_message = str(secret_json_error)
-    else:
-        secret_json_message = None
-
-    # 2) Streamlit Cloud: alternative TOML table format.
-    try:
-        if "gee" in st.secrets:
-            gee_info = dict(st.secrets["gee"])
-            service_account = gee_info.get("client_email")
-            project_id = gee_info.get("project_id", default_project_id)
-            credentials = ee.ServiceAccountCredentials(
-                service_account,
-                key_data=json.dumps(gee_info),
-            )
-            ee.Initialize(credentials, project=project_id)
-            return True, None
-    except Exception as secret_table_error:
-        secret_table_message = str(secret_table_error)
-    else:
-        secret_table_message = None
-
-    # 3) Local computer: use the Earth Engine authentication already saved locally.
-    try:
-        ee.Initialize(project=default_project_id)
-        return True, None
-    except Exception as local_error:
-        details = [str(local_error)]
-        if secret_json_message:
-            details.append("GEE_SERVICE_ACCOUNT_JSON error: " + secret_json_message)
-        if secret_table_message:
-            details.append("[gee] secrets error: " + secret_table_message)
-        return False, " | ".join(details)
+    """Public deployment version: no live Earth Engine initialization needed."""
+    return False, None
 
 
 @st.cache_data(show_spinner=False)
@@ -2613,8 +2554,6 @@ def sentinel2_products_explorer_section():
         st.warning(s2tr("missing_files"))
         return
 
-    ee_ok, ee_error = initialize_earth_engine()
-
     st.markdown(
         f"""
 <div class="section-card">
@@ -2703,62 +2642,14 @@ def sentinel2_products_explorer_section():
         unsafe_allow_html=True,
     )
 
-    # Public deployment-safe display:
-    # - RF Risk Map is always shown from the exported annual layout image.
-    # - NDVI/NDWI/NDDI try Earth Engine first.
-    # - If Earth Engine permissions are not available on Streamlit Cloud, the dashboard
-    #   falls back to the exported annual layout image instead of crashing.
+    # Public final display: show the exported annual layout image for the selected product.
+    # This avoids Earth Engine permission problems on Streamlit Cloud and keeps the dashboard stable.
     if selected_product == "RF Risk Map":
         display_map("Risk Classification", selected_year)
-        st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
-
     else:
-        dynamic_map_displayed = False
+        display_map(selected_product, selected_year)
 
-        if ee_ok:
-            try:
-                product_image, vis_params = get_selected_product_image(selected_row, selected_product)
-
-                m = folium.Map(
-                    location=[36.85, -2.10],
-                    zoom_start=10,
-                    tiles="Esri.WorldImagery",
-                    attr="Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-                )
-
-                add_ee_layer_to_folium_map(
-                    m,
-                    product_image,
-                    vis_params,
-                    f"{selected_product_label} | {s2tr('sentinel_date')}: {selected_row['image_date']}",
-                )
-
-                try:
-                    roi = ee.FeatureCollection(ROI_ASSET)
-                    add_ee_layer_to_folium_map(
-                        m,
-                        roi.style(**{
-                            "color": "F6F4F0",
-                            "fillColor": "00000000",
-                            "width": 2,
-                        }),
-                        {},
-                        "Study area boundary",
-                    )
-                except Exception:
-                    pass
-
-                folium.LayerControl(collapsed=False).add_to(m)
-                _map_state = st_folium(m, width=1250, height=620)
-                dynamic_map_displayed = True
-
-            except Exception:
-                dynamic_map_displayed = False
-
-        if not dynamic_map_displayed:
-            display_map(selected_product, selected_year)
-
-        st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
+    st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
 
     selected_year_products = product_df[product_df["hydrological_year"] == selected_year].copy()
 
