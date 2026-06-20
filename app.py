@@ -2280,39 +2280,57 @@ def initialize_earth_engine():
         Works after running Earth Engine authentication on the computer.
 
     Streamlit Cloud use:
-        Add a service-account JSON as a TOML table named [gee] in the app secrets.
-        The code will use those secrets automatically.
+        Add a service-account JSON in Streamlit Secrets using either:
+        GEE_SERVICE_ACCOUNT_JSON = """{...full JSON...}"""
+        or a TOML table named [gee].
     """
-    project_id = "graduationproject-493110"
+    default_project_id = "graduationproject-493110"
 
-    # 1) Streamlit Cloud: use secrets if they exist.
+    # 1) Streamlit Cloud: easiest format, one secret containing the full JSON.
+    try:
+        if "GEE_SERVICE_ACCOUNT_JSON" in st.secrets:
+            gee_info = json.loads(st.secrets["GEE_SERVICE_ACCOUNT_JSON"])
+            service_account = gee_info.get("client_email")
+            project_id = gee_info.get("project_id", default_project_id)
+            credentials = ee.ServiceAccountCredentials(
+                service_account,
+                key_data=json.dumps(gee_info),
+            )
+            ee.Initialize(credentials, project=project_id)
+            return True, None
+    except Exception as secret_json_error:
+        secret_json_message = str(secret_json_error)
+    else:
+        secret_json_message = None
+
+    # 2) Streamlit Cloud: alternative TOML table format.
     try:
         if "gee" in st.secrets:
             gee_info = dict(st.secrets["gee"])
             service_account = gee_info.get("client_email")
-            project_id = gee_info.get("project_id", project_id)
-
-            if service_account:
-                credentials = ee.ServiceAccountCredentials(
-                    service_account,
-                    key_data=json.dumps(gee_info),
-                )
-                ee.Initialize(credentials, project=project_id)
-                return True, None
-    except Exception as cloud_error:
-        # If cloud secrets are incomplete, fall back to local authentication below.
-        cloud_error_message = str(cloud_error)
+            project_id = gee_info.get("project_id", default_project_id)
+            credentials = ee.ServiceAccountCredentials(
+                service_account,
+                key_data=json.dumps(gee_info),
+            )
+            ee.Initialize(credentials, project=project_id)
+            return True, None
+    except Exception as secret_table_error:
+        secret_table_message = str(secret_table_error)
     else:
-        cloud_error_message = None
+        secret_table_message = None
 
-    # 2) Local computer: use the Earth Engine authentication already saved locally.
+    # 3) Local computer: use the Earth Engine authentication already saved locally.
     try:
-        ee.Initialize(project=project_id)
+        ee.Initialize(project=default_project_id)
         return True, None
     except Exception as local_error:
-        if cloud_error_message:
-            return False, f"Streamlit secrets error: {cloud_error_message} | Local Earth Engine error: {local_error}"
-        return False, str(local_error)
+        details = [str(local_error)]
+        if secret_json_message:
+            details.append("GEE_SERVICE_ACCOUNT_JSON error: " + secret_json_message)
+        if secret_table_message:
+            details.append("[gee] secrets error: " + secret_table_message)
+        return False, " | ".join(details)
 
 
 @st.cache_data(show_spinner=False)
