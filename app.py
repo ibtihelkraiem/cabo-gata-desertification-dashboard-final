@@ -2703,49 +2703,61 @@ def sentinel2_products_explorer_section():
         unsafe_allow_html=True,
     )
 
-    # NDVI / NDWI / NDDI are loaded dynamically from Earth Engine.
-    # The RF Risk Map is displayed from the already exported annual layout image.
-    # This avoids private-asset access errors while still showing the selected product
-    # with the selected Sentinel-2 date and hydrological year.
+    # Public deployment-safe display:
+    # - RF Risk Map is always shown from the exported annual layout image.
+    # - NDVI/NDWI/NDDI try Earth Engine first.
+    # - If Earth Engine permissions are not available on Streamlit Cloud, the dashboard
+    #   falls back to the exported annual layout image instead of crashing.
     if selected_product == "RF Risk Map":
         display_map("Risk Classification", selected_year)
         st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
 
-    elif not ee_ok:
-        st.error(s2tr("ee_error"))
-        st.code(str(ee_error))
-
     else:
-        product_image, vis_params = get_selected_product_image(selected_row, selected_product)
+        dynamic_map_displayed = False
 
-        m = folium.Map(
-            location=[36.85, -2.10],
-            zoom_start=10,
-            tiles="Esri.WorldImagery",
-            attr="Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-        )
+        if ee_ok:
+            try:
+                product_image, vis_params = get_selected_product_image(selected_row, selected_product)
 
-        add_ee_layer_to_folium_map(
-            m,
-            product_image,
-            vis_params,
-            f"{selected_product_label} | {s2tr('sentinel_date')}: {selected_row['image_date']}",
-        )
+                m = folium.Map(
+                    location=[36.85, -2.10],
+                    zoom_start=10,
+                    tiles="Esri.WorldImagery",
+                    attr="Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+                )
 
-        roi = ee.FeatureCollection(ROI_ASSET)
-        add_ee_layer_to_folium_map(
-            m,
-            roi.style(**{
-                "color": "F6F4F0",
-                "fillColor": "00000000",
-                "width": 2,
-            }),
-            {},
-            "Study area boundary",
-        )
+                add_ee_layer_to_folium_map(
+                    m,
+                    product_image,
+                    vis_params,
+                    f"{selected_product_label} | {s2tr('sentinel_date')}: {selected_row['image_date']}",
+                )
 
-        folium.LayerControl(collapsed=False).add_to(m)
-        _map_state = st_folium(m, width=1250, height=620)
+                try:
+                    roi = ee.FeatureCollection(ROI_ASSET)
+                    add_ee_layer_to_folium_map(
+                        m,
+                        roi.style(**{
+                            "color": "F6F4F0",
+                            "fillColor": "00000000",
+                            "width": 2,
+                        }),
+                        {},
+                        "Study area boundary",
+                    )
+                except Exception:
+                    pass
+
+                folium.LayerControl(collapsed=False).add_to(m)
+                _map_state = st_folium(m, width=1250, height=620)
+                dynamic_map_displayed = True
+
+            except Exception:
+                dynamic_map_displayed = False
+
+        if not dynamic_map_displayed:
+            display_map(selected_product, selected_year)
+
         st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
 
     selected_year_products = product_df[product_df["hydrological_year"] == selected_year].copy()
