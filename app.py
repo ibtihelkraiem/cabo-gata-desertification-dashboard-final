@@ -34,6 +34,8 @@ st.set_page_config(
 # ============================================================
 # PRIVATE ACCESS LOGIN
 # ============================================================
+# IMPORTANT: this version uses new session keys (v3) so the app asks
+# for username/password again, even if an old browser session was already open.
 # Recommended: configure credentials in Streamlit Cloud secrets:
 #
 # [auth_users]
@@ -71,7 +73,7 @@ def get_auth_users():
 
 def require_login():
     """Show a private login page and stop the app until credentials are valid."""
-    if st.session_state.get("authenticated", False):
+    if st.session_state.get("dashboard_authenticated_v3", False):
         return
 
     st.markdown(
@@ -160,8 +162,8 @@ def require_login():
         expected_password = users.get(username_clean, "")
 
         if expected_password and hmac.compare_digest(password, expected_password):
-            st.session_state["authenticated"] = True
-            st.session_state["auth_username"] = username_clean
+            st.session_state["dashboard_authenticated_v3"] = True
+            st.session_state["dashboard_auth_username_v3"] = username_clean
             safe_rerun()
         else:
             st.error("Incorrect username or password. Please try again.")
@@ -171,12 +173,12 @@ def require_login():
 
 def logout_button():
     """Optional logout control, shown only after successful access."""
-    if st.session_state.get("authenticated", False):
+    if st.session_state.get("dashboard_authenticated_v3", False):
         with st.sidebar:
-            st.caption(f"Connected as: {st.session_state.get('auth_username', 'user')}")
+            st.caption(f"Connected as: {st.session_state.get('dashboard_auth_username_v3', 'user')}")
             if st.button("Log out", key="logout_button"):
-                st.session_state["authenticated"] = False
-                st.session_state.pop("auth_username", None)
+                st.session_state["dashboard_authenticated_v3"] = False
+                st.session_state.pop("dashboard_auth_username_v3", None)
                 safe_rerun()
 
 
