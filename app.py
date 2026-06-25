@@ -1,5 +1,4 @@
 import time
-import hmac
 import base64
 import io
 import json
@@ -30,160 +29,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-
-# ============================================================
-# PRIVATE ACCESS LOGIN
-# ============================================================
-# IMPORTANT: this version uses new session keys (v3) so the app asks
-# for username/password again, even if an old browser session was already open.
-# Recommended: configure credentials in Streamlit Cloud secrets:
-#
-# [auth_users]
-# jose = "CHANGE_THIS_PASSWORD"
-# ibtihel = "CHANGE_THIS_PASSWORD"
-#
-# The fallback credentials below keep the app accessible even if secrets
-# are not configured yet. Change them before sharing the final public link.
-DEFAULT_AUTH_USERS = {
-    "jose": "CaboGata2025!",
-    "ibtihel": "CaboGata2025!",
-}
-
-
-def safe_rerun():
-    """Rerun compatible with recent and older Streamlit versions."""
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
-
-
-def get_auth_users():
-    """Load username/password pairs from Streamlit secrets, with a safe fallback."""
-    try:
-        if "auth_users" in st.secrets:
-            users = dict(st.secrets["auth_users"])
-            if users:
-                return {str(k).strip().lower(): str(v) for k, v in users.items()}
-    except Exception:
-        pass
-
-    return {str(k).strip().lower(): str(v) for k, v in DEFAULT_AUTH_USERS.items()}
-
-
-def require_login():
-    """Show a private login page and stop the app until credentials are valid."""
-    if st.session_state.get("dashboard_authenticated_v3", False):
-        return
-
-    st.markdown(
-        """
-        <style>
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        div[data-testid="stToolbar"] {visibility: hidden;}
-
-        .stApp {
-            color: #F6F4F0;
-            background:
-                radial-gradient(circle at 12% 18%, rgba(46, 92, 62, 0.26), transparent 26%),
-                radial-gradient(circle at 92% 14%, rgba(188, 155, 106, 0.21), transparent 30%),
-                radial-gradient(circle at 72% 82%, rgba(106, 67, 33, 0.34), transparent 34%),
-                linear-gradient(135deg, #071017 0%, #0D1820 42%, #20160E 100%);
-        }
-
-        .login-card {
-            max-width: 460px;
-            margin: 9vh auto 0 auto;
-            background: rgba(8, 16, 24, 0.84);
-            border: 1px solid rgba(242, 201, 139, 0.24);
-            border-radius: 22px;
-            padding: 28px 30px 24px 30px;
-            box-shadow: 0 18px 42px rgba(0,0,0,0.38);
-            text-align: center;
-        }
-
-        .login-title {
-            color: #F6F4F0;
-            font-size: 1.55rem;
-            font-weight: 900;
-            line-height: 1.18;
-            margin-bottom: 0.35rem;
-        }
-
-        .login-subtitle {
-            color: #E6D2A9;
-            font-size: 0.93rem;
-            line-height: 1.42;
-            margin-bottom: 0.2rem;
-        }
-
-        label, .stTextInput label, .stForm label {
-            color: #F6F4F0 !important;
-            font-weight: 750 !important;
-        }
-
-        .stButton > button,
-        .stFormSubmitButton > button {
-            background: linear-gradient(135deg, #F2C98B, #BC9B6A) !important;
-            color: #081018 !important;
-            border: 1px solid rgba(246,244,240,0.25) !important;
-            border-radius: 12px !important;
-            font-weight: 850 !important;
-            width: 100% !important;
-            padding: 0.62rem 0.9rem !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="login-card">
-            <div class="login-title">AI-Based Desertification Monitoring Dashboard</div>
-            <div class="login-subtitle">
-                Private access · Accès privé · Acceso privado<br>
-                Cabo de Gata–Níjar Natural Park
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    with st.form("dashboard_login_form"):
-        username = st.text_input("Username", placeholder="jose")
-        password = st.text_input("Password", type="password", placeholder="Password")
-        submitted = st.form_submit_button("Open dashboard")
-
-    if submitted:
-        users = get_auth_users()
-        username_clean = username.strip().lower()
-        expected_password = users.get(username_clean, "")
-
-        if expected_password and hmac.compare_digest(password, expected_password):
-            st.session_state["dashboard_authenticated_v3"] = True
-            st.session_state["dashboard_auth_username_v3"] = username_clean
-            safe_rerun()
-        else:
-            st.error("Incorrect username or password. Please try again.")
-
-    st.stop()
-
-
-def logout_button():
-    """Optional logout control, shown only after successful access."""
-    if st.session_state.get("dashboard_authenticated_v3", False):
-        with st.sidebar:
-            st.caption(f"Connected as: {st.session_state.get('dashboard_auth_username_v3', 'user')}")
-            if st.button("Log out", key="logout_button"):
-                st.session_state["dashboard_authenticated_v3"] = False
-                st.session_state.pop("dashboard_auth_username_v3", None)
-                safe_rerun()
-
-
-# Stop here until the user enters a valid username/password.
-require_login()
 
 BASE_DIR = Path(__file__).parent
 
@@ -2936,7 +2781,6 @@ def sentinel2_products_explorer_section():
 # ============================================================
 
 initialize_state()
-logout_button()
 
 # ============================================================
 # MAIN PAGE
