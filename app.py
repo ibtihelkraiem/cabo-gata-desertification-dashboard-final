@@ -1,4 +1,5 @@
 import time
+import hmac
 import base64
 import io
 import json
@@ -11,7 +12,10 @@ import plotly.graph_objects as go
 import streamlit as st
 from PIL import Image
 
-# Public static deployment version: no live Earth Engine dependency on Streamlit Cloud
+# Earth Engine / web map packages for the Sentinel-2 Products Explorer
+import ee
+import folium
+from streamlit_folium import st_folium
 
 
 
@@ -25,6 +29,159 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+
+# ============================================================
+# PRIVATE ACCESS LOGIN
+# ============================================================
+# Recommended: configure credentials in Streamlit Cloud secrets:
+#
+# [auth_users]
+# jose = "CHANGE_THIS_PASSWORD"
+# ibtihel = "CHANGE_THIS_PASSWORD"
+#
+# The fallback credentials below keep the app accessible even if secrets
+# are not configured yet. Change them before sharing the final public link.
+DEFAULT_AUTH_USERS = {
+    "jose": "CaboGata2025!",
+    "ibtihel": "CaboGata2025!",
+}
+
+
+def safe_rerun():
+    """Rerun compatible with recent and older Streamlit versions."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+
+def get_auth_users():
+    """Load username/password pairs from Streamlit secrets, with a safe fallback."""
+    try:
+        if "auth_users" in st.secrets:
+            users = dict(st.secrets["auth_users"])
+            if users:
+                return {str(k).strip().lower(): str(v) for k, v in users.items()}
+    except Exception:
+        pass
+
+    return {str(k).strip().lower(): str(v) for k, v in DEFAULT_AUTH_USERS.items()}
+
+
+def require_login():
+    """Show a private login page and stop the app until credentials are valid."""
+    if st.session_state.get("authenticated", False):
+        return
+
+    st.markdown(
+        """
+        <style>
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        div[data-testid="stToolbar"] {visibility: hidden;}
+
+        .stApp {
+            color: #F6F4F0;
+            background:
+                radial-gradient(circle at 12% 18%, rgba(46, 92, 62, 0.26), transparent 26%),
+                radial-gradient(circle at 92% 14%, rgba(188, 155, 106, 0.21), transparent 30%),
+                radial-gradient(circle at 72% 82%, rgba(106, 67, 33, 0.34), transparent 34%),
+                linear-gradient(135deg, #071017 0%, #0D1820 42%, #20160E 100%);
+        }
+
+        .login-card {
+            max-width: 460px;
+            margin: 9vh auto 0 auto;
+            background: rgba(8, 16, 24, 0.84);
+            border: 1px solid rgba(242, 201, 139, 0.24);
+            border-radius: 22px;
+            padding: 28px 30px 24px 30px;
+            box-shadow: 0 18px 42px rgba(0,0,0,0.38);
+            text-align: center;
+        }
+
+        .login-title {
+            color: #F6F4F0;
+            font-size: 1.55rem;
+            font-weight: 900;
+            line-height: 1.18;
+            margin-bottom: 0.35rem;
+        }
+
+        .login-subtitle {
+            color: #E6D2A9;
+            font-size: 0.93rem;
+            line-height: 1.42;
+            margin-bottom: 0.2rem;
+        }
+
+        label, .stTextInput label, .stForm label {
+            color: #F6F4F0 !important;
+            font-weight: 750 !important;
+        }
+
+        .stButton > button,
+        .stFormSubmitButton > button {
+            background: linear-gradient(135deg, #F2C98B, #BC9B6A) !important;
+            color: #081018 !important;
+            border: 1px solid rgba(246,244,240,0.25) !important;
+            border-radius: 12px !important;
+            font-weight: 850 !important;
+            width: 100% !important;
+            padding: 0.62rem 0.9rem !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        """
+        <div class="login-card">
+            <div class="login-title">AI-Based Desertification Monitoring Dashboard</div>
+            <div class="login-subtitle">
+                Private access · Accès privé · Acceso privado<br>
+                Cabo de Gata–Níjar Natural Park
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.form("dashboard_login_form"):
+        username = st.text_input("Username", placeholder="jose")
+        password = st.text_input("Password", type="password", placeholder="Password")
+        submitted = st.form_submit_button("Open dashboard")
+
+    if submitted:
+        users = get_auth_users()
+        username_clean = username.strip().lower()
+        expected_password = users.get(username_clean, "")
+
+        if expected_password and hmac.compare_digest(password, expected_password):
+            st.session_state["authenticated"] = True
+            st.session_state["auth_username"] = username_clean
+            safe_rerun()
+        else:
+            st.error("Incorrect username or password. Please try again.")
+
+    st.stop()
+
+
+def logout_button():
+    """Optional logout control, shown only after successful access."""
+    if st.session_state.get("authenticated", False):
+        with st.sidebar:
+            st.caption(f"Connected as: {st.session_state.get('auth_username', 'user')}")
+            if st.button("Log out", key="logout_button"):
+                st.session_state["authenticated"] = False
+                st.session_state.pop("auth_username", None)
+                safe_rerun()
+
+
+# Stop here until the user enters a valid username/password.
+require_login()
 
 BASE_DIR = Path(__file__).parent
 
@@ -2270,8 +2427,64 @@ def s2_table_column_labels():
 
 @st.cache_resource(show_spinner=False)
 def initialize_earth_engine():
-    """Public deployment version: no live Earth Engine initialization needed."""
-    return False, None
+    """
+    Initialize Earth Engine for the dynamic Sentinel-2 product map.
+
+    Local use:
+        Works after running Earth Engine authentication on the computer.
+
+    Streamlit Cloud use:
+        Add a service-account JSON in Streamlit Secrets using either:
+        GEE_SERVICE_ACCOUNT_JSON containing the full JSON text,
+        or a TOML table named [gee].
+    """
+    default_project_id = "graduationproject-493110"
+
+    # 1) Streamlit Cloud: easiest format, one secret containing the full JSON.
+    try:
+        if "GEE_SERVICE_ACCOUNT_JSON" in st.secrets:
+            gee_info = json.loads(st.secrets["GEE_SERVICE_ACCOUNT_JSON"])
+            service_account = gee_info.get("client_email")
+            project_id = gee_info.get("project_id", default_project_id)
+            credentials = ee.ServiceAccountCredentials(
+                service_account,
+                key_data=json.dumps(gee_info),
+            )
+            ee.Initialize(credentials, project=project_id)
+            return True, None
+    except Exception as secret_json_error:
+        secret_json_message = str(secret_json_error)
+    else:
+        secret_json_message = None
+
+    # 2) Streamlit Cloud: alternative TOML table format.
+    try:
+        if "gee" in st.secrets:
+            gee_info = dict(st.secrets["gee"])
+            service_account = gee_info.get("client_email")
+            project_id = gee_info.get("project_id", default_project_id)
+            credentials = ee.ServiceAccountCredentials(
+                service_account,
+                key_data=json.dumps(gee_info),
+            )
+            ee.Initialize(credentials, project=project_id)
+            return True, None
+    except Exception as secret_table_error:
+        secret_table_message = str(secret_table_error)
+    else:
+        secret_table_message = None
+
+    # 3) Local computer: use the Earth Engine authentication already saved locally.
+    try:
+        ee.Initialize(project=default_project_id)
+        return True, None
+    except Exception as local_error:
+        details = [str(local_error)]
+        if secret_json_message:
+            details.append("GEE_SERVICE_ACCOUNT_JSON error: " + secret_json_message)
+        if secret_table_message:
+            details.append("[gee] secrets error: " + secret_table_message)
+        return False, " | ".join(details)
 
 
 @st.cache_data(show_spinner=False)
@@ -2554,6 +2767,8 @@ def sentinel2_products_explorer_section():
         st.warning(s2tr("missing_files"))
         return
 
+    ee_ok, ee_error = initialize_earth_engine()
+
     st.markdown(
         f"""
 <div class="section-card">
@@ -2642,14 +2857,50 @@ def sentinel2_products_explorer_section():
         unsafe_allow_html=True,
     )
 
-    # Public final display: show the exported annual layout image for the selected product.
-    # This avoids Earth Engine permission problems on Streamlit Cloud and keeps the dashboard stable.
+    # NDVI / NDWI / NDDI are loaded dynamically from Earth Engine.
+    # The RF Risk Map is displayed from the already exported annual layout image.
+    # This avoids private-asset access errors while still showing the selected product
+    # with the selected Sentinel-2 date and hydrological year.
     if selected_product == "RF Risk Map":
         display_map("Risk Classification", selected_year)
-    else:
-        display_map(selected_product, selected_year)
+        st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
 
-    st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
+    elif not ee_ok:
+        st.error(s2tr("ee_error"))
+        st.code(str(ee_error))
+
+    else:
+        product_image, vis_params = get_selected_product_image(selected_row, selected_product)
+
+        m = folium.Map(
+            location=[36.85, -2.10],
+            zoom_start=10,
+            tiles="Esri.WorldImagery",
+            attr="Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+        )
+
+        add_ee_layer_to_folium_map(
+            m,
+            product_image,
+            vis_params,
+            f"{selected_product_label} | {s2tr('sentinel_date')}: {selected_row['image_date']}",
+        )
+
+        roi = ee.FeatureCollection(ROI_ASSET)
+        add_ee_layer_to_folium_map(
+            m,
+            roi.style(**{
+                "color": "F6F4F0",
+                "fillColor": "00000000",
+                "width": 2,
+            }),
+            {},
+            "Study area boundary",
+        )
+
+        folium.LayerControl(collapsed=False).add_to(m)
+        _map_state = st_folium(m, width=1250, height=620)
+        st.markdown(products_explorer_legend_html(selected_product), unsafe_allow_html=True)
 
     selected_year_products = product_df[product_df["hydrological_year"] == selected_year].copy()
 
@@ -2683,6 +2934,7 @@ def sentinel2_products_explorer_section():
 # ============================================================
 
 initialize_state()
+logout_button()
 
 # ============================================================
 # MAIN PAGE
